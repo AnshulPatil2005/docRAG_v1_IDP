@@ -19,3 +19,20 @@ node_modules/
 
 .DS_Store
 Thumbs.db
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+logs/
+
+# Build / dist
+dist/
+build/
+*.egg-info/

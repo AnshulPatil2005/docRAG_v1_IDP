@@ -291,23 +291,17 @@
 
                 if (response.ok) {
                     const result = await response.json();
+                    const docId = result.doc_id;
                     statusMessages.innerHTML = `
                         <div class="status-message success">
                             <strong>Success!</strong> Document uploaded successfully
-                            <br><small>Document ID: ${result.document_id || 'N/A'}</small>
+                            <br><small>Document ID: ${docId}</small>
                         </div>
-                        <div class="status-message">
-                            Processing pipeline started. This includes:
-                            <ul style="margin-top: 10px; margin-left: 20px;">
-                                <li>OCR text extraction</li>
-                                <li>Table detection</li>
-                                <li>Clause extraction</li>
-                                <li>Deadline identification</li>
-                                <li>Rule validation</li>
-                                <li>AI-powered guidance generation</li>
-                            </ul>
+                        <div class="status-message" id="processingMsg">
+                            <div class="loading"></div> Processing pipeline running — fetching results...
                         </div>
                     `;
+                    await pollResults(docId);
                 } else {
                     const error = await response.json();
                     statusMessages.innerHTML = `
@@ -324,6 +318,63 @@
                     </div>
                 `;
             }
+        }
+
+        async function pollResults(docId) {
+            const maxAttempts = 12;
+            for (let i = 0; i < maxAttempts; i++) {
+                await new Promise(r => setTimeout(r, 3000));
+                try {
+                    const [clausesRes, guidanceRes] = await Promise.all([
+                        fetch(`${API_URL}/docs/${docId}/clauses`),
+                        fetch(`${API_URL}/docs/${docId}/guidance`)
+                    ]);
+                    const clauses = await clausesRes.json();
+                    const guidance = await guidanceRes.json();
+
+                    if (clauses.length > 0 || guidance.length > 0) {
+                        renderResults(docId, clauses, guidance);
+                        return;
+                    }
+                } catch (e) { /* keep polling */ }
+            }
+            document.getElementById('processingMsg').innerHTML =
+                'Processing is taking longer than expected. Check back via the API.';
+        }
+
+        function renderResults(docId, clauses, guidance) {
+            const riskColor = { high: '#ef4444', medium: '#f59e0b', low: '#10b981' };
+
+            const clausesHtml = clauses.length === 0 ? '<p style="color:#888">No clauses found.</p>' :
+                clauses.map(c => `
+                    <div style="padding:12px;background:#f8f9ff;border-radius:8px;margin-bottom:8px;border-left:4px solid #667eea">
+                        <strong style="text-transform:capitalize">${c.type.replace(/_/g,' ')}</strong>
+                        <span style="float:right;font-size:0.8rem;color:#888">confidence: ${Math.round(c.confidence * 100)}%</span>
+                        <p style="margin-top:6px;color:#444;font-size:0.9rem">${c.text}</p>
+                    </div>`).join('');
+
+            const guidanceHtml = guidance.length === 0 ? '<p style="color:#888">No guidance items.</p>' :
+                guidance.map(g => `
+                    <div style="padding:12px;background:#f8f9ff;border-radius:8px;margin-bottom:8px;border-left:4px solid ${riskColor[g.risk] || '#667eea'}">
+                        <strong>${g.title}</strong>
+                        <span style="float:right;padding:2px 8px;border-radius:12px;font-size:0.75rem;background:${riskColor[g.risk] || '#667eea'};color:white">${g.risk}</span>
+                        <p style="margin-top:6px;color:#444;font-size:0.9rem">${g.what_it_means}</p>
+                        <p style="margin-top:4px;color:#667eea;font-size:0.85rem"><strong>Action:</strong> ${g.action}</p>
+                    </div>`).join('');
+
+            document.getElementById('processingMsg').outerHTML = `
+                <div style="margin-top:20px">
+                    <h4 style="color:#333;margin-bottom:12px">Extracted Clauses (${clauses.length})</h4>
+                    ${clausesHtml}
+                    <h4 style="color:#333;margin:20px 0 12px">Guidance Items (${guidance.length})</h4>
+                    ${guidanceHtml}
+                    <div style="margin-top:16px;padding:12px;background:#f0f2ff;border-radius:8px;font-size:0.85rem">
+                        <a href="${API_URL}/docs/${docId}/deadlines.ics" style="color:#667eea;font-weight:600">Download calendar deadlines (.ics)</a>
+                        &nbsp;|&nbsp;
+                        <a href="${API_URL}/docs" style="color:#667eea;font-weight:600">API Docs</a>
+                    </div>
+                </div>
+            `;
         }
     </script>
 </body>

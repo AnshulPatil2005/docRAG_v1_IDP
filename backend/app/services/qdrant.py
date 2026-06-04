@@ -6,52 +6,50 @@ from typing import Any, Dict, List
 
 _COL = os.getenv("QDRANT_COLLECTION", "spans")
 _QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
+_EMB_MODEL = "sentence-transformers/all-mpnet-base-v2"
+_DIM = 768
+
 _qdrant_client: Any = None
 _embed_model: Any = None
-_qdrant_disabled = False
-_embedding_disabled = False
 
 
 def _get_qdrant():
-    global _qdrant_client, _qdrant_disabled
-    if _qdrant_disabled:
-        raise RuntimeError("Qdrant disabled")
+    global _qdrant_client
     if _qdrant_client is None:
-        try:
-            from qdrant_client import QdrantClient
-        except Exception as exc:
-            _qdrant_disabled = True
-            raise RuntimeError(f"qdrant-client import failed: {exc}") from exc
+        from qdrant_client import QdrantClient
         _qdrant_client = QdrantClient(url=_QDRANT_URL)
     return _qdrant_client
 
 
 def _get_model():
-    global _embed_model, _embedding_disabled
-    if _embedding_disabled:
-        raise RuntimeError("Embedding model disabled")
+    global _embed_model
     if _embed_model is None:
-        try:
-            from sentence_transformers import SentenceTransformer
-        except Exception as exc:
-            _embedding_disabled = True
-            raise RuntimeError(f"sentence-transformers import failed: {exc}") from exc
-        _embed_model = SentenceTransformer("sentence-transformers/all-mpnet-base-v2")
+        from sentence_transformers import SentenceTransformer
+        _embed_model = SentenceTransformer(_EMB_MODEL)
     return _embed_model
 
 
-def ensure_collection(dim: int = 768) -> None:
+def ensure_collection() -> None:
     client = _get_qdrant()
     from qdrant_client.models import Distance, VectorParams
 
-    cols = {c.name for c in client.get_collections().collections}
-    if _COL not in cols:
-        client.create_collection(_COL, vectors_config=VectorParams(size=dim, distance=Distance.COSINE))
+    cols = {c.name: c for c in client.get_collections().collections}
+    if _COL in cols:
+        info = client.get_collection(_COL)
+        existing_dim = info.config.params.vectors.size  # type: ignore[union-attr]
+        if existing_dim != _DIM:
+            client.delete_collection(_COL)
+        else:
+            return
+
+    client.create_collection(
+        _COL,
+        vectors_config=VectorParams(size=_DIM, distance=Distance.COSINE),
+    )
 
 
 def embed(texts: List[str]) -> List[List[float]]:
-    model = _get_model()
-    return model.encode(texts, normalize_embeddings=True).tolist()  # type: ignore
+    return _get_model().encode(texts, normalize_embeddings=True).tolist()  # type: ignore
 
 
 def _stable_id(doc: str, idx: int) -> str:
@@ -65,10 +63,6 @@ def upsert_spans(doc_id: str, spans: List[Dict[str, Any]]) -> bool:
         client = _get_qdrant()
         ensure_collection()
         from qdrant_client.models import Batch
-    except Exception:
-        return False
-
-    try:
         vectors = embed([s["text"] for s in spans])
         ids = [_stable_id(doc_id, i) for i in range(len(spans))]
         payloads = [{"doc_id": doc_id, **s} for s in spans]
@@ -82,15 +76,11 @@ def upsert_spans(doc_id: str, spans: List[Dict[str, Any]]) -> bool:
         return False
 
 
-def search_spans(doc_id: str, query: str, top_k: int = 5):
+def search_spans(doc_id: str, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
     try:
         client = _get_qdrant()
         ensure_collection()
         from qdrant_client.models import FieldCondition, Filter, MatchValue
-    except Exception:
-        return []
-
-    try:
         vec = embed([query])[0]
         qfilter = Filter(must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id))])
         hits = client.search(

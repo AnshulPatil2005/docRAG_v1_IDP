@@ -42,10 +42,6 @@ async def ask(req: AskRequest) -> AskAnswer:
     if not isinstance(answer, str) or not isinstance(conf, (int, float)):
         raise HTTPException(status_code=500, detail="RAG pipeline returned invalid types")
 
-    # Require citations + minimum confidence
-    if conf < 0.6 or "[" not in answer:
-        raise HTTPException(status_code=428, detail="Need review: insufficient evidence/citations")
-
     # Treat hits as a sequence of mappings for stricter typing
     hits: Sequence[Mapping[str, Any]] = cast(Sequence[Mapping[str, Any]], hits_raw or [])
 

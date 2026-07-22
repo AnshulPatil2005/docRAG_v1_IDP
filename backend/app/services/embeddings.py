@@ -1,18 +1,20 @@
-from .qdrant import upsert_spans
-from .storage import get_json
+from __future__ import annotations
 
-def run(doc_id: str):
-    layout = get_json(f"{doc_id}/layout_index.json") or {"pages": {}}
-    spans = []
-    for page, pdata in layout.get("pages", {}).items():
-        for sp in pdata.get("spans", []):
-            spans.append({
-                "page": int(page),
-                "start": sp["start"],
-                "end": sp["end"],
-                "bbox": sp.get("bbox"),
-                "text": sp.get("text", f"page{page}:{sp['start']}-{sp['end']}")  # replace when OCR adds text
-            })
-    if spans:
-        upsert_spans(doc_id, spans)
-    return {"embeddings": len(spans)}
+from typing import List, Optional
+
+from sentence_transformers import SentenceTransformer
+
+from .. import config
+
+_model: Optional[SentenceTransformer] = None
+
+
+def get_model() -> SentenceTransformer:
+    global _model
+    if _model is None:
+        _model = SentenceTransformer(config.EMBEDDING_MODEL)
+    return _model
+
+
+def embed(texts: List[str]) -> List[List[float]]:
+    return get_model().encode(texts, normalize_embeddings=True).tolist()

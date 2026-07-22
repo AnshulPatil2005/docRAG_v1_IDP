@@ -1,16 +1,4 @@
-# docker-compose.yml (Compose V2: you can omit 'version:')
 services:
-  redis:
-    image: redis:7
-    command: ["redis-server", "--appendonly", "yes"]
-    ports: ["6379:6379"]
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-    restart: unless-stopped
-
   qdrant:
     image: qdrant/qdrant:latest
     ports:
@@ -25,83 +13,40 @@ services:
       retries: 30
     restart: unless-stopped
 
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
+  ollama:
+    image: ollama/ollama:latest
     ports:
-      - "9000:9000"   # API
-      - "9001:9001"   # Console
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+      - "11434:11434"
     volumes:
-      - minio_storage:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
+      - ollama_data:/root/.ollama
     restart: unless-stopped
+
   api:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    image: idp-backend:dev
+    image: docrag-v1-backend:dev
     working_dir: /app
-    volumes: ["./backend:/app", "./configs:/configs"]
+    volumes:
+      - ./backend:/app
+      - uploads_data:/app/uploads
     environment:
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
-      CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP: "true"
-      LLM_PROVIDER: openrouter
-      LLM_MODEL: deepseek/deepseek-chat-v3-0324:free
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-documents}
+      OLLAMA_BASE_URL: http://ollama:11434
+      LLM_MODEL: ${LLM_MODEL:-llama3}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      CHUNK_TOKENS: ${CHUNK_TOKENS:-500}
+      CHUNK_OVERLAP_TOKENS: ${CHUNK_OVERLAP_TOKENS:-50}
+      RAG_TOP_K: ${RAG_TOP_K:-5}
+      UPLOAD_DIR: /app/uploads
       PYTHONPATH: /app
-      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
-      MINIO_BUCKET: ${MINIO_BUCKET:-docs}
-      MINIO_SECURE: ${MINIO_SECURE:-false}
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-    ports: ["8000:8000"]
+    ports:
+      - "8000:8000"
     depends_on:
-      redis:
-        condition: service_healthy
       qdrant:
         condition: service_healthy
-      minio:
-        condition: service_healthy
-    restart: unless-stopped
-
-  worker:
-    image: idp-backend:dev
-    working_dir: /app
-    volumes: ["./backend:/app", "./configs:/configs"]
-    environment:
-      PYTHONPATH: /app
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
-      CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP: "true"
-      LLM_PROVIDER: openrouter
-      LLM_MODEL: deepseek/deepseek-chat-v3-0324:free
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
-      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
-      MINIO_BUCKET: ${MINIO_BUCKET:-docs}
-      MINIO_SECURE: ${MINIO_SECURE:-false}
-    command: ["celery", "-A", "app.workers.celery_app:celery", "worker", "-l", "info"]
-    depends_on:
-      redis:
-        condition: service_healthy
-      qdrant:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-      api:
-        condition: service_started
     restart: unless-stopped
 
   frontend:
@@ -117,5 +62,7 @@ services:
 volumes:
   qdrant_storage:
     driver: local
-  minio_storage:
+  ollama_data:
+    driver: local
+  uploads_data:
     driver: local
